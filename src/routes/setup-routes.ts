@@ -234,7 +234,7 @@ export function createSetupRoutes(): Router {
       const userAgent = process.env['USER_AGENT'] ?? 'RedditScraper/1.0';
 
       const proxy = new ProxyManager({
-        proxyUrl,
+        proxyUrl: undefined, // Test without proxy first
         userAgent,
         rateLimitMs: 100,
         maxRetries: 0,
@@ -244,17 +244,39 @@ export function createSetupRoutes(): Router {
       const response = await proxy.fetch(testUrl);
       const body = await response.text();
 
+      // Also test with proxy
+      let proxyResult = null;
+      if (proxyUrl) {
+        try {
+          const proxyTest = new ProxyManager({
+            proxyUrl,
+            userAgent,
+            rateLimitMs: 100,
+            maxRetries: 0,
+          });
+          const proxyResponse = await proxyTest.fetch(testUrl);
+          const proxyBody = await proxyResponse.text();
+          proxyResult = {
+            httpStatus: proxyResponse.status,
+            statusText: proxyResponse.statusText,
+            bodyPreview: proxyBody.substring(0, 200),
+          };
+        } catch (proxyErr) {
+          proxyResult = { error: proxyErr instanceof Error ? proxyErr.message : String(proxyErr) };
+        }
+      }
+
       res.json({
         status: 'success',
-        proxyConfigured: proxy.isProxyConfigured(),
         proxyUrl: proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ':***@') : 'none',
         userAgent,
-        redditResponse: {
+        directResponse: {
           httpStatus: response.status,
           statusText: response.statusText,
-          bodyPreview: body.substring(0, 500),
+          bodyPreview: body.substring(0, 300),
           bodyLength: body.length,
         },
+        proxyResponse: proxyResult,
       });
     } catch (err) {
       res.json({
