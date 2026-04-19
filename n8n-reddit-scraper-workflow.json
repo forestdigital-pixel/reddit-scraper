@@ -1,0 +1,439 @@
+{
+  "name": "Reddit Scraper - Full Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-node",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/health",
+        "options": {}
+      },
+      "id": "health-check",
+      "name": "Health Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 100],
+      "notes": "GET /health — no auth required"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/search/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ $json.search_query || 'saas tools' }}" },
+            { "name": "subreddit", "value": "={{ $json.subreddit || '' }}" },
+            { "name": "sort", "value": "relevance" },
+            { "name": "timeframe", "value": "week" },
+            { "name": "page_size", "value": "25" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "search-reddit",
+      "name": "Search Reddit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "notes": "GET /api/v1/search/search?q=keyword&subreddit=&sort=&timeframe=&page_size="
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/themes/classify",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "subreddit", "value": "={{ $json.subreddit || 'SaaS' }}" },
+            { "name": "limit", "value": "50" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "classify-themes",
+      "name": "Classify Themes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 500],
+      "notes": "POST /api/v1/themes/classify — classify subreddit content into themes"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/themes/pain_points/discussions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "subreddit", "value": "={{ $json.subreddit || 'SaaS' }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-pain-points",
+      "name": "Get Pain Points",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 500],
+      "notes": "GET /api/v1/themes/pain_points/discussions?subreddit="
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/audience-research",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ subreddits: ['SaaS', 'startups', 'Entrepreneur'] }) }}",
+        "options": {}
+      },
+      "id": "audience-research",
+      "name": "Audience Research",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 700],
+      "notes": "POST /api/v1/audience-research — multi-subreddit pain point & solution discovery"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/subreddits/{{ $json.subreddit || 'SaaS' }}/stats",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "subreddit-stats",
+      "name": "Subreddit Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 900],
+      "notes": "GET /api/v1/subreddits/:name/stats"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/subreddits/{{ $json.subreddit || 'SaaS' }}/sentiment",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "timeframe", "value": "week" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sentiment-analysis",
+      "name": "Sentiment Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 900],
+      "notes": "GET /api/v1/subreddits/:name/sentiment?timeframe=week"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/subreddits/{{ $json.subreddit || 'SaaS' }}/contributors",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "limit", "value": "10" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "top-contributors",
+      "name": "Top Contributors",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 900],
+      "notes": "GET /api/v1/subreddits/:name/contributors?limit=10"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/keywords",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "list-keywords",
+      "name": "List Keywords",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 1100],
+      "notes": "GET /api/v1/keywords — list all tracked keywords"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/keywords",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "keyword", "value": "={{ $json.keyword || 'project management tool' }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "add-keyword",
+      "name": "Add Keyword",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 1100],
+      "notes": "POST /api/v1/keywords — start tracking a keyword"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/webhooks",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $vars.N8N_WEBHOOK_URL, events: ['keyword_match', 'theme_detected'] }) }}",
+        "options": {}
+      },
+      "id": "register-webhook",
+      "name": "Register Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 1300],
+      "notes": "POST /api/v1/webhooks — register n8n webhook URL to receive keyword match events"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "reddit-scraper-webhook",
+        "options": {}
+      },
+      "id": "webhook-receiver",
+      "name": "Webhook Receiver",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 1500],
+      "webhookId": "reddit-scraper-webhook",
+      "notes": "Receives keyword_match and theme_detected events from the scraper"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-keyword-match",
+              "leftValue": "={{ $json.headers['x-webhook-event'] }}",
+              "rightValue": "keyword_match",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-event",
+      "name": "Is Keyword Match?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 1500]
+    },
+    {
+      "parameters": {
+        "channel": "#reddit-alerts",
+        "text": "=🔔 *New Reddit Match*\n\n*Keyword:* {{ $json.body.keyword }}\n*Content:* https://reddit.com{{ $json.body.permalink }}\n*Matched at:* {{ $json.body.matchedAt }}",
+        "otherOptions": {}
+      },
+      "id": "slack-alert",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [700, 1400],
+      "notes": "Send keyword match alert to Slack (configure credentials)"
+    },
+    {
+      "parameters": {
+        "documentId": { "__rl": true, "mode": "list", "value": "" },
+        "sheetName": { "__rl": true, "mode": "list", "value": "" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "keyword": "={{ $json.body.keyword }}",
+            "content_id": "={{ $json.body.contentId }}",
+            "permalink": "=https://reddit.com{{ $json.body.permalink }}",
+            "matched_at": "={{ $json.body.matchedAt }}",
+            "content_type": "={{ $json.body.contentType }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "google-sheets-log",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [700, 1600],
+      "notes": "Log keyword matches to a Google Sheet (configure credentials & sheet)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 6 }]
+        }
+      },
+      "id": "scheduled-research",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 1800]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SCRAPER_BASE_URL }}/api/v1/audience-research",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $vars.SCRAPER_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ subreddits: ['SaaS', 'startups', 'Entrepreneur', 'smallbusiness'] }) }}",
+        "options": {}
+      },
+      "id": "scheduled-audience-research",
+      "name": "Scheduled Audience Research",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 1800],
+      "notes": "Runs audience research every 6 hours on target subreddits"
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          { "node": "Health Check", "type": "main", "index": 0 },
+          { "node": "Search Reddit", "type": "main", "index": 0 },
+          { "node": "Classify Themes", "type": "main", "index": 0 },
+          { "node": "Audience Research", "type": "main", "index": 0 },
+          { "node": "Subreddit Stats", "type": "main", "index": 0 },
+          { "node": "List Keywords", "type": "main", "index": 0 },
+          { "node": "Register Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Classify Themes": {
+      "main": [
+        [{ "node": "Get Pain Points", "type": "main", "index": 0 }]
+      ]
+    },
+    "Subreddit Stats": {
+      "main": [
+        [
+          { "node": "Sentiment Analysis", "type": "main", "index": 0 },
+          { "node": "Top Contributors", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "List Keywords": {
+      "main": [
+        [{ "node": "Add Keyword", "type": "main", "index": 0 }]
+      ]
+    },
+    "Webhook Receiver": {
+      "main": [
+        [{ "node": "Is Keyword Match?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Keyword Match?": {
+      "main": [
+        [{ "node": "Slack Alert", "type": "main", "index": 0 }],
+        [{ "node": "Log to Google Sheets", "type": "main", "index": 0 }]
+      ]
+    },
+    "Every 6 Hours": {
+      "main": [
+        [{ "node": "Scheduled Audience Research", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "reddit-scraper" },
+    { "name": "audience-research" }
+  ],
+  "pinData": {}
+}
