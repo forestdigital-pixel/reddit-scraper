@@ -1,13 +1,6 @@
+import http from 'node:http';
+import https from 'node:https';
 import { RateLimiter } from './rate-limiter.js';
-
-/**
- * Minimal type for the HttpsProxyAgent from the `https-proxy-agent` package.
- * Defined locally to avoid ESM/CJS import issues with TypeScript strict mode.
- * The actual class is loaded via dynamic import() at runtime.
- */
-interface HttpsProxyAgentInstance {
-  proxy: URL;
-}
 
 /**
  * Configuration for the ProxyManager.
@@ -22,28 +15,28 @@ export interface ProxyConfig {
 }
 
 /**
- * Dynamically imports the ESM-only https-proxy-agent package.
+ * Minimal Response-like object returned by ProxyManager.fetch().
  */
-async function createProxyAgent(proxyUrl: string): Promise<HttpsProxyAgentInstance> {
-  const { HttpsProxyAgent } = await import('https-proxy-agent');
-  return new HttpsProxyAgent(proxyUrl);
+export interface ProxyResponse {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  json(): Promise<unknown>;
+  text(): Promise<string>;
 }
 
 /**
  * Routes all outbound HTTP requests through a rotating proxy with retry logic,
  * rate limiting, and custom User-Agent headers.
  *
- * - Uses `https-proxy-agent` for proxied requests
- * - Falls back to direct connection if no proxy is configured (logs warning)
- * - Retries on 429, 403, and 5xx with exponential backoff: delay = 2s * 4^(attempt-1)
- * - Enforces rate limiting via the RateLimiter
- * - Sets a custom User-Agent header on every request
- * - Logs all failed requests with timestamps
+ * Uses node:http/node:https with https-proxy-agent for proper proxy support
+ * (Node.js native fetch/undici does not support the agent option).
  *
  * Validates: Requirements 9.1, 9.2, 9.3, 9.5, 9.6, 9.7
  */
 export class ProxyManager {
-  private agent: HttpsProxyAgentInstance | undefined;
+  private agent: http.Agent | https.Agent | undefined;
   private agentReady: Promise<void> | undefined;
   private readonly rateLimiter: RateLimiter;
   private readonly config: ProxyConfig;
@@ -53,10 +46,7 @@ export class ProxyManager {
     this.rateLimiter = new RateLimiter(config.rateLimitMs);
 
     if (config.proxyUrl) {
-      // Initialize the proxy agent asynchronously
-      this.agentReady = createProxyAgent(config.proxyUrl).then((agent) => {
-        this.agent = agent;
-      });
+      this.agentReady = this.initProxyAgent(config.proxyUrl);
     } else {
       this.agent = undefined;
       this.agentReady = undefined;
@@ -67,46 +57,40 @@ export class ProxyManager {
     }
   }
 
+  private async initProxyAgent(proxyUrl: string): Promise<void> {
+    const { HttpsProxyAgent } = await import('https-proxy-agent');
+    this.agent = new HttpsProxyAgent(proxyUrl) as unknown as https.Agent;
+  }
+
   /**
-   * Fetches a URL through the proxy (or directly if no proxy is configured),
-   * with rate limiting and retry logic on retryable status codes.
+   * Fetches a URL through the proxy (or directly), with rate limiting and retry logic.
    */
-  async fetch(url: string, options?: RequestInit): Promise<Response> {
-    // Ensure the proxy agent is ready before making requests
+  async fetch(url: string, _options?: RequestInit): Promise<ProxyResponse> {
     if (this.agentReady) {
       await this.agentReady;
     }
 
     const maxRetries = this.config.maxRetries;
-    const baseDelay = 2000; // 2 seconds
-
+    const baseDelay = 2000;
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      // Wait for retry backoff on subsequent attempts
       if (attempt > 0) {
-        const delay = baseDelay * Math.pow(4, attempt - 1); // 2s, 8s, 32s
+        const delay = baseDelay * Math.pow(4, attempt - 1);
         await this.sleep(delay);
       }
 
-      // Acquire rate limiter token before making the request
       await this.rateLimiter.acquire();
 
       try {
-        const fetchOptions = this.buildFetchOptions(options);
-        const response = await fetch(url, fetchOptions);
+        const response = await this.makeRequest(url);
 
         if (this.isRetryableStatus(response.status)) {
           console.error(
             `[${new Date().toISOString()}] ProxyManager: Request failed - ` +
             `URL: ${url}, Status: ${response.status}, Attempt: ${attempt + 1}/${maxRetries + 1}`
           );
-
-          if (attempt < maxRetries) {
-            continue;
-          }
-
-          // All retries exhausted, return the last failed response
+          if (attempt < maxRetries) continue;
           return response;
         }
 
@@ -117,64 +101,84 @@ export class ProxyManager {
           `[${new Date().toISOString()}] ProxyManager: Request error - ` +
           `URL: ${url}, Error: ${lastError.message}, Attempt: ${attempt + 1}/${maxRetries + 1}`
         );
-
-        if (attempt >= maxRetries) {
-          throw lastError;
-        }
+        if (attempt >= maxRetries) throw lastError;
       }
     }
 
-    // This should be unreachable, but TypeScript needs it
-    throw lastError ?? new Error('ProxyManager: fetch failed with no error captured');
+    throw lastError ?? new Error('ProxyManager: fetch failed');
   }
 
   /**
-   * Returns the HttpsProxyAgent instance, or undefined if no proxy is configured.
+   * Makes an HTTP/HTTPS request using node:http/node:https with the proxy agent.
    */
-  getAgent(): HttpsProxyAgentInstance | undefined {
+  private makeRequest(url: string): Promise<ProxyResponse> {
+    return new Promise((resolve, reject) => {
+      const parsed = new URL(url);
+      const isHttps = parsed.protocol === 'https:';
+      const lib = isHttps ? https : http;
+
+      const options: https.RequestOptions = {
+        hostname: parsed.hostname,
+        port: parsed.port || (isHttps ? 443 : 80),
+        path: parsed.pathname + parsed.search,
+        method: 'GET',
+        headers: {
+          'User-Agent': this.config.userAgent,
+          'Accept': 'application/json',
+        },
+        timeout: 30000,
+      };
+
+      if (this.agent) {
+        options.agent = this.agent;
+      }
+
+      const req = lib.request(options, (res) => {
+        const chunks: Buffer[] = [];
+
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          const body = Buffer.concat(chunks).toString('utf-8');
+          const status = res.statusCode ?? 0;
+
+          const responseHeaders: Record<string, string> = {};
+          for (const [key, value] of Object.entries(res.headers)) {
+            if (value) responseHeaders[key] = Array.isArray(value) ? value.join(', ') : value;
+          }
+
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            statusText: res.statusMessage ?? '',
+            headers: responseHeaders,
+            json: async () => JSON.parse(body),
+            text: async () => body,
+          });
+        });
+      });
+
+      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error(`Request timeout after 30s: ${url}`));
+      });
+
+      req.end();
+    });
+  }
+
+  getAgent(): http.Agent | https.Agent | undefined {
     return this.agent;
   }
 
-  /**
-   * Returns whether a proxy URL was configured.
-   */
   isProxyConfigured(): boolean {
     return this.config.proxyUrl !== undefined && this.config.proxyUrl !== '';
   }
 
-  /**
-   * Builds fetch options with the custom User-Agent header and proxy agent (if configured).
-   */
-  private buildFetchOptions(options?: RequestInit): RequestInit {
-    const headers = new Headers(options?.headers);
-    headers.set('User-Agent', this.config.userAgent);
-
-    const fetchOptions: RequestInit = {
-      ...options,
-      headers,
-    };
-
-    // Attach the proxy agent for Node.js native fetch.
-    // Node.js native fetch (undici) doesn't support http.Agent directly,
-    // but the https-proxy-agent works with the non-standard `agent` property.
-    if (this.agent) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (fetchOptions as any).agent = this.agent;
-    }
-
-    return fetchOptions;
-  }
-
-  /**
-   * Determines if a response status code is retryable (429, 403, or 5xx).
-   */
   private isRetryableStatus(status: number): boolean {
     return status === 429 || status === 403 || status >= 500;
   }
 
-  /**
-   * Sleeps for the specified number of milliseconds.
-   */
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
