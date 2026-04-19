@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { getPool } from '../db/connection.js';
+import { ProxyManager } from '../core/proxy-manager.js';
 
 export function createSetupRoutes(): Router {
   const router = Router();
@@ -212,6 +213,56 @@ export function createSetupRoutes(): Router {
       res.status(500).json({
         status: 'error',
         error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  /**
+   * GET /setup/test-proxy — tests the proxy connection to Reddit.
+   * Returns the raw response or error for debugging.
+   */
+  router.get('/test-proxy', async (req: Request, res: Response): Promise<void> => {
+    const setupSecret = req.header('X-Setup-Secret');
+    const expectedSecret = process.env['API_KEY'];
+    if (!setupSecret || setupSecret !== expectedSecret) {
+      res.status(401).json({ error: 'Invalid or missing X-Setup-Secret header' });
+      return;
+    }
+
+    try {
+      const proxyUrl = process.env['PROXY_URL'];
+      const userAgent = process.env['USER_AGENT'] ?? 'RedditScraper/1.0';
+
+      const proxy = new ProxyManager({
+        proxyUrl,
+        userAgent,
+        rateLimitMs: 100,
+        maxRetries: 0,
+      });
+
+      const testUrl = 'https://www.reddit.com/r/javascript/new.json?limit=1&raw_json=1';
+      const response = await proxy.fetch(testUrl);
+      const body = await response.text();
+
+      res.json({
+        status: 'success',
+        proxyConfigured: proxy.isProxyConfigured(),
+        proxyUrl: proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ':***@') : 'none',
+        userAgent,
+        redditResponse: {
+          httpStatus: response.status,
+          statusText: response.statusText,
+          bodyPreview: body.substring(0, 500),
+          bodyLength: body.length,
+        },
+      });
+    } catch (err) {
+      res.json({
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        proxyUrl: process.env['PROXY_URL'] ? 'configured' : 'not set',
+        userAgent: process.env['USER_AGENT'] ?? 'not set',
       });
     }
   });
