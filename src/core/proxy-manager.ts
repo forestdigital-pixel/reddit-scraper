@@ -124,7 +124,11 @@ export class ProxyManager {
         method: 'GET',
         headers: {
           'User-Agent': this.config.userAgent,
-          'Accept': 'application/json',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'identity',
+          'Connection': 'keep-alive',
+          'Cache-Control': 'no-cache',
         },
         timeout: 30000,
       };
