@@ -21,7 +21,7 @@ export interface RedditScraperConfig {
   rateLimiter: RateLimiter;
 }
 
-const BASE_URL = 'https://www.reddit.com';
+const BASE_URL = 'https://old.reddit.com';
 const MAX_LIMIT = 100;
 
 /**

@@ -240,7 +240,7 @@ export function createSetupRoutes(): Router {
         maxRetries: 0,
       });
 
-      const testUrl = 'https://www.reddit.com/r/javascript/new.json?limit=1&raw_json=1';
+      const testUrl = 'https://old.reddit.com/r/javascript/new.json?limit=1&raw_json=1';
       const response = await proxy.fetch(testUrl);
       const body = await response.text();
 
